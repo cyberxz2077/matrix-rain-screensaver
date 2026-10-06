@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:,">
+    <title>代码雨 - Matrix Rain</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: black;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="matrixCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('matrixCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ";
+        const fontSize = 16;
+        const fps = 30;
+        const duration = 30;
+        const totalFrames = fps * duration;
+        const tailFrames = 120;
+        const mod = (value, divisor) => ((value % divisor) + divisor) % divisor;
+        const parameters = new URLSearchParams(location.search);
+        let tracks = [];
+        let currentFrame = 0;
+        let playing = false;
+        let animationRequest = 0;
+        let startedAt = 0;
+        let startFrame = 0;
+
+        // Fixed seed: random-looking rain is the same on every loop and export.
+        function randomGenerator(seed) {
+            return () => {
+                seed ^= seed << 13;
+                seed ^= seed >>> 17;
+                seed ^= seed << 5;
+                return (seed >>> 0) / 4294967296;
+            };
+        }
+
+        // Cache glyphs once; keep the original 16 px monospace, pure green style.
+        const glyphs = document.createElement('canvas');
+        const glyphHeight = 24;
+        glyphs.width = characters.length * fontSize;
+        glyphs.height = glyphHeight;
+        const glyphContext = glyphs.getContext('2d');
+        glyphContext.fillStyle = '#0f0';
+        glyphContext.font = fontSize + 'px monospace';
+        for (let i = 0; i < characters.length; i++) {
+            glyphContext.fillText(characters[i], i * fontSize, 18);
+        }
+        const opacity = Array.from({ length: tailFrames }, (_, age) => Math.pow(0.95, age));
+
+        function buildTracks() {
+            const columns = Math.ceil(canvas.width / fontSize);
+            const rows = Math.ceil(canvas.height / fontSize) + 1;
+            tracks = Array.from({ length: columns }, (_, column) => {
+                const random = randomGenerator((0x4d415452 ^ Math.imul(column + 1, 2654435761)) >>> 0);
+                const phase = Math.floor(random() * totalFrames);
+                // Each column has different gaps, but its complete schedule is 900 frames.
+                const passes = Math.max(1, Math.min(Math.floor(totalFrames / rows),
+                    Math.round(totalFrames / (rows + 20 + random() * 50))));
+                const spare = Math.max(0, totalFrames - passes * rows);
+                const weights = Array.from({ length: passes }, () => 0.25 + random());
+                const weightSum = weights.reduce((a, b) => a + b, 0);
+                const y = new Int32Array(totalFrames).fill(-1);
+                const glyph = new Uint16Array(totalFrames);
+                let weight = 0;
+                for (let pass = 0; pass < passes; pass++) {
+                    const begin = pass * rows + Math.floor(spare * weight / weightSum);
+                    weight += weights[pass];
+                    for (let row = 0; row < Math.min(rows, totalFrames); row++) {
+                        const frame = mod(begin + row + phase, totalFrames);
+                        y[frame] = row * fontSize;
+                        glyph[frame] = Math.floor(random() * characters.length);
+                    }
+                }
+                return { y, glyph };
+            });
+        }
+
+        function renderFrame(frame) {
+            if (!Number.isFinite(frame)) throw new TypeError('Frame must be finite');
+            currentFrame = mod(Math.floor(frame), totalFrames);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Reconstruct the trailing 4 seconds, including the previous cycle.
+            // No previous canvas state is needed: frame f and f + 900 are identical.
+            for (let age = tailFrames - 1; age >= 0; age--) {
+                const previousFrame = mod(currentFrame - age, totalFrames);
+                ctx.globalAlpha = opacity[age];
+                for (let column = 0; column < tracks.length; column++) {
+                    const track = tracks[column];
+                    const y = track.y[previousFrame];
+                    if (y < 0) continue;
+                    ctx.drawImage(glyphs, track.glyph[previousFrame] * fontSize, 0,
+                        fontSize, glyphHeight, column * fontSize, y - 18,
+                        fontSize, glyphHeight);
+                }
+            }
+            ctx.globalAlpha = 1;
+            return currentFrame;
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            buildTracks();
+            renderFrame(currentFrame);
+        }
+
+        function tick(now) {
+            if (!playing) return;
+            const frame = mod(startFrame + Math.floor((now - startedAt) * fps / 1000), totalFrames);
+            if (frame !== currentFrame) renderFrame(frame);
+            animationRequest = requestAnimationFrame(tick);
+        }
+
+        function pause() {
+            playing = false;
+            cancelAnimationFrame(animationRequest);
+        }
+
+        function play() {
+            if (playing) return;
+            playing = true;
+            startFrame = currentFrame;
+            startedAt = performance.now();
+            animationRequest = requestAnimationFrame(tick);
+        }
+
+        // Export uses exact frame indices, never screen recording or wall-clock timing.
+        window.matrixRain = Object.freeze({
+            fps, duration, totalFrames, renderFrame, pause, play,
+            get frame() { return currentFrame; },
+            get playing() { return playing; }
+        });
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        renderFrame(Number(parameters.get('frame')) || 0);
+        if (parameters.get('manual') !== '1') play();
+    </script>
+</body>
+</html>

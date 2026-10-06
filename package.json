@@ -1,0 +1,14 @@
+{
+  "name": "matrix-rain-screensaver",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A deterministic 30-second Matrix-style rain loop and macOS screensaver guide",
+  "type": "module",
+  "scripts": {
+    "export": "node scripts/export-video.mjs",
+    "check": "node scripts/check-source.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
